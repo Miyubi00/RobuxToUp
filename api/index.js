@@ -97,21 +97,43 @@ const sendDiscordNotify = async (order) => {
 
 // --- ROUTES ---
 
-// 1. Verify Roblox User
+// ... import dan setup lainnya ...
+
+// 1. Verify Roblox User (UPDATE: Tambah Headers)
 app.post('/api/roblox/verify-user', async (req, res) => {
   const { username } = req.body;
   try {
-    const searchRes = await axios.post('https://users.roblox.com/v1/usernames/users', {
-      usernames: [username],
-      excludeBannedUsers: true
-    });
+    // [FIX] Tambahkan config headers agar tidak diblokir Roblox
+    const config = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    };
+
+    // 1. Cari User ID
+    const searchRes = await axios.post(
+      'https://users.roblox.com/v1/usernames/users', 
+      {
+        usernames: [username],
+        excludeBannedUsers: true
+      },
+      config // <--- Masukkan headers disini
+    );
 
     if (searchRes.data.data.length === 0) {
       return res.status(404).json({ error: "User tidak ditemukan" });
     }
 
     const user = searchRes.data.data[0];
-    const thumbRes = await axios.get(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${user.id}&size=150x150&format=Png&isCircular=true`);
+
+    // 2. Ambil Avatar (Juga pakai config headers)
+    const thumbRes = await axios.get(
+      `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${user.id}&size=150x150&format=Png&isCircular=true`,
+      config // <--- Masukkan headers disini juga
+    );
+
     const avatarUrl = thumbRes.data.data[0].imageUrl;
 
     res.json({
@@ -120,10 +142,18 @@ app.post('/api/roblox/verify-user', async (req, res) => {
       displayName: user.displayName,
       avatar: avatarUrl
     });
+
   } catch (error) {
+    console.error("Roblox API Error:", error.message);
+    // Cek respon error dari Roblox biar tau kenapa
+    if (error.response) {
+        console.error("Data Error:", error.response.data);
+        return res.status(error.response.status).json({ error: "Gagal: " + error.response.statusText });
+    }
     res.status(500).json({ error: "Gagal koneksi ke Roblox API" });
   }
 });
+
 
 app.get('/api/proxy/avatar/:userId', async (req, res) => {
   const { userId } = req.params;
