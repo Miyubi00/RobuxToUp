@@ -1,21 +1,32 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-const { createClient } = require('@supabase/supabase-js');
-const rateLimit = require('express-rate-limit');
-const { z } = require('zod');
-const midtransClient = require('midtrans-client');
+import dotenv from 'dotenv';
+import express from 'express';
+import cors from 'cors';
+import axios from 'axios';
+import { createClient } from '@supabase/supabase-js';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
+import midtransClient from 'midtrans-client';
+
+// Load env vars
+dotenv.config();
 
 const app = express();
 
-// [FIX] Trust Proxy (Penting untuk VPS/Ngrok agar tidak error rate limit)
+// [FIX] Trust Proxy (Penting untuk Vercel agar rate limit akurat)
 app.set('trust proxy', 1);
 
 app.use(express.json());
-app.use(cors());
 
-// Supabase Init
+// [FIX] CORS Configuration
+// Allow all origin '*' atau ganti dengan domain frontend kamu nanti
+app.use(cors({
+    origin: '*', 
+    methods: ['GET', 'POST'],
+    credentials: true
+}));
+
+// Supabase Init (Pastikan nama ENV sesuai di Vercel)
+// Gunakan SERVICE_ROLE key untuk backend (SUPABASE_KEY)
 const supabase = createClient(process.env.VITE_SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Midtrans Init
@@ -30,7 +41,7 @@ const limiter = rateLimit({
     max: 100,
     standardHeaders: true,
     legacyHeaders: false,
-    validate: { xForwardedForHeader: false } // Matikan validasi strict untuk VPS
+    validate: { xForwardedForHeader: false }
 });
 app.use(limiter);
 
@@ -48,27 +59,25 @@ const FEE_CONFIG = {
   permata: { type: 'flat', value: 3000 },
 };
 
-// --- HELPER FUNCTIONS (UPDATED DISCORD) ---
-
+// --- HELPER FUNCTIONS ---
 const sendDiscordNotify = async (order) => {
   let title = "📦 Pesanan Baru Masuk";
-  let color = 16776960; // Kuning (Default: Pending)
+  let color = 16776960; 
   let description = "Menunggu Pembayaran...";
 
-  // Logika Warna & Judul Berdasarkan Status
   if (order.status === 'PENDING_PEMBAYARAN') {
       title = "⏳ Menunggu Pembayaran";
-      color = 16776960; // Kuning
+      color = 16776960;
       description = "User baru saja membuat pesanan. Belum dibayar.";
   } 
   else if (order.status === 'PENGECEKAN_GAMEPASS' || order.payment_status === 'PAID') {
-      title = "✅ PAYMENT SUCCESS - Robux Pending"; // Sesuai request
-      color = 3066993; // Hijau
+      title = "✅ PAYMENT SUCCESS - Robux Pending";
+      color = 3066993;
       description = "**SIAP PROSES!** Segera kirim Robux ke user ini.";
   }
   else if (order.status === 'GAGAL') {
       title = "❌ Pesanan Gagal / Expired";
-      color = 15158332; // Merah
+      color = 15158332;
       description = "Pembayaran gagal atau kadaluarsa.";
   }
 
@@ -91,36 +100,37 @@ const sendDiscordNotify = async (order) => {
   };
   
   try {
-    await axios.post(process.env.DISCORD_WEBHOOK_URL, { embeds: [embed] });
+    if (process.env.DISCORD_WEBHOOK_URL) {
+        await axios.post(process.env.DISCORD_WEBHOOK_URL, { embeds: [embed] });
+    }
   } catch (err) { console.error("Discord Error", err); }
 };
 
 // --- ROUTES ---
 
-// ... import dan setup lainnya ...
+// Root check
+app.get('/', (req, res) => res.send('Robux API Running...'));
 
-// 1. Verify Roblox User (UPDATE: Tambah Headers)
+// 1. Verify Roblox User (DENGAN HEADERS ANTI BLOKIR)
 app.post('/api/roblox/verify-user', async (req, res) => {
   const { username } = req.body;
+  
+  if (!username) return res.status(400).json({ error: "Username kosong" });
+
   try {
-    // [FIX] Tambahkan config headers agar tidak diblokir Roblox
+    // Header Browser agar tidak diblokir Roblox di Vercel
     const config = {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
+        'Accept': 'application/json'
       }
     };
 
-    // 1. Cari User ID
-    const searchRes = await axios.post(
-      'https://users.roblox.com/v1/usernames/users', 
-      {
-        usernames: [username],
-        excludeBannedUsers: true
-      },
-      config // <--- Masukkan headers disini
-    );
+    // Cari User ID
+    const searchRes = await axios.post('https://users.roblox.com/v1/usernames/users', {
+      usernames: [username],
+      excludeBannedUsers: true
+    }, config);
 
     if (searchRes.data.data.length === 0) {
       return res.status(404).json({ error: "User tidak ditemukan" });
@@ -128,12 +138,8 @@ app.post('/api/roblox/verify-user', async (req, res) => {
 
     const user = searchRes.data.data[0];
 
-    // 2. Ambil Avatar (Juga pakai config headers)
-    const thumbRes = await axios.get(
-      `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${user.id}&size=150x150&format=Png&isCircular=true`,
-      config // <--- Masukkan headers disini juga
-    );
-
+    // Ambil Avatar
+    const thumbRes = await axios.get(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${user.id}&size=150x150&format=Png&isCircular=true`, config);
     const avatarUrl = thumbRes.data.data[0].imageUrl;
 
     res.json({
@@ -144,80 +150,48 @@ app.post('/api/roblox/verify-user', async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Roblox API Error:", error.message);
-    // Cek respon error dari Roblox biar tau kenapa
-    if (error.response) {
-        console.error("Data Error:", error.response.data);
-        return res.status(error.response.status).json({ error: "Gagal: " + error.response.statusText });
-    }
+    console.error("API Error:", error.message);
     res.status(500).json({ error: "Gagal koneksi ke Roblox API" });
   }
 });
 
-
+// [BARU] Proxy Avatar (Wajib ada biar gambar muncul di Dashboard Admin)
 app.get('/api/proxy/avatar/:userId', async (req, res) => {
-  const { userId } = req.params;
-  
-  try {
-    // 1. Request ke Roblox API (Server side tidak kena CORS)
-    const response = await axios.get(
-      `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=true`
-    );
-
-    // 2. Ambil URL gambar yang asli dari dalam JSON
-    // Contoh return: { data: [{ imageUrl: "https://tr.rbxcdn.com/..." }] }
-    const realImageUrl = response.data.data[0].imageUrl;
-
-    // 3. Redirect browser langsung ke gambar asli
-    // Jadi di mata browser, link ini adalah gambar.
-    res.redirect(realImageUrl);
-
-  } catch (error) {
-    console.error("Gagal ambil avatar:", error.message);
-    // Fallback ke gambar default (Noob Head) jika error
-    res.redirect('https://tr.rbxcdn.com/53549254345345'); 
-  }
-});
-
-
-// [UPDATE FINAL] Cek Eksistensi Gamepass (Via Thumbnails API - Lebih Aman)
-app.post('/api/roblox/check-gamepass', async (req, res) => {
-  const { gamePassId } = req.body;
-
-  if (!gamePassId || isNaN(gamePassId)) {
-    return res.status(400).json({ error: "ID tidak valid" });
-  }
-
-  try {
-    const apiRes = await axios.get(`https://thumbnails.roblox.com/v1/game-passes?gamePassIds=${gamePassId}&size=150x150&format=Png&isCircular=false`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', // Header Browser
-      }
-    });
-    
-    const data = apiRes.data.data[0];
-
-    // Cek apakah statusnya 'Completed' (Berarti gambar ada = ID Valid)
-    if (data && data.state === 'Completed') {
-        console.log(`✅ Gamepass ID ${gamePassId} Valid (Image Found)`);
-        res.json({ 
-            valid: true, 
-            imageUrl: data.imageUrl 
-        });
-    } else {
-        console.log(`❌ Gamepass ID ${gamePassId} Invalid (No Image)`);
-        res.status(404).json({ valid: false });
+    const { userId } = req.params;
+    try {
+      const response = await axios.get(
+        `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=true`
+      );
+      const realImageUrl = response.data.data[0].imageUrl;
+      res.redirect(realImageUrl);
+    } catch (error) {
+      res.redirect('https://tr.rbxcdn.com/53549254345345'); // Fallback image
     }
-
-  } catch (error) {
-    console.error("❌ Cek Exist Error:", error.message);
-    // Jika error 429 (Too Many Requests) atau 403, anggap valid aja biar user tetap bisa bayar
-    // (Fail safe strategy: lebih baik lolos daripada user gak bisa bayar)
-    res.json({ valid: true, warning: "Cannot verify but allowed" }); 
-  }
 });
 
-// 2. Create Order & Payment (NOTIFIKASI SAAT ORDER DIBUAT)
+// [BARU] Cek Gamepass (Existence Only - Lebih Aman)
+app.post('/api/roblox/check-gamepass', async (req, res) => {
+    const { gamePassId } = req.body;
+    if (!gamePassId) return res.status(400).json({ error: "ID Kosong" });
+
+    try {
+        const apiRes = await axios.get(`https://thumbnails.roblox.com/v1/game-passes?gamePassIds=${gamePassId}&size=150x150&format=Png&isCircular=false`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        });
+        const data = apiRes.data.data[0];
+
+        if (data && data.state === 'Completed') {
+            res.json({ valid: true, imageUrl: data.imageUrl });
+        } else {
+            res.status(404).json({ valid: false });
+        }
+    } catch (error) {
+        // Fail safe: Kalau error connection, anggap valid aja biar user tetap bisa bayar
+        res.json({ valid: true, warning: "Connection error, bypassed" }); 
+    }
+});
+
+// 2. Create Order
 app.post('/api/order/create', async (req, res) => {
   const schema = z.object({
     username: z.string(),
@@ -234,11 +208,9 @@ app.post('/api/order/create', async (req, res) => {
 
   const { username, userId, email, amount, paymentMethod, whatsapp, gamepassLink } = req.body;
   
-  // A. LOGIKA HARGA
   const ROBUX_RATE = 137.5; 
   const basePrice = Math.round(amount * ROBUX_RATE);
   
-  // B. HITUNG FEE
   let adminFee = 0;
   const feeRule = FEE_CONFIG[paymentMethod];
   if (feeRule) {
@@ -246,11 +218,9 @@ app.post('/api/order/create', async (req, res) => {
     else if (feeRule.type === 'flat') adminFee = feeRule.value;
   }
 
-  // C. TOTAL BAYAR
   const grossAmount = basePrice + adminFee;
   const gamepassPrice = Math.ceil(amount / 0.7);
 
-  // Simpan ke Supabase
   const { data: order, error } = await supabase
     .from('orders')
     .insert([{
@@ -268,10 +238,9 @@ app.post('/api/order/create', async (req, res) => {
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // [BARU] Kirim Notifikasi Discord saat Pesanan Masuk (Status: Kuning)
-  sendDiscordNotify(order);
+  await sendDiscordNotify(order);
 
-  // D. MAPPING PAYMENT METHOD
+  // Midtrans Parameter
   let enabledPayments = [];
   let bankTransferConfig = {};
 
@@ -280,18 +249,9 @@ app.post('/api/order/create', async (req, res) => {
       case 'gopay': enabledPayments = ['gopay']; break;
       case 'shopeepay': enabledPayments = ['shopeepay']; break;
       case 'dana': case 'ovo': enabledPayments = ['qris']; break;
-      case 'bca': 
-          enabledPayments = ['bca_va']; 
-          bankTransferConfig = { bank: 'bca', va_number: "12345678911" }; 
-          break;
-      case 'bri': 
-          enabledPayments = ['bri_va']; 
-          bankTransferConfig = { bank: 'bri' }; 
-          break;
-      case 'bni': 
-          enabledPayments = ['bni_va']; 
-          bankTransferConfig = { bank: 'bni' }; 
-          break;
+      case 'bca': enabledPayments = ['bca_va']; bankTransferConfig = { bank: 'bca', va_number: "12345678911" }; break;
+      case 'bri': enabledPayments = ['bri_va']; bankTransferConfig = { bank: 'bri' }; break;
+      case 'bni': enabledPayments = ['bni_va']; bankTransferConfig = { bank: 'bni' }; break;
       case 'permata': enabledPayments = ['permata_va']; break;
       case 'mandiri': enabledPayments = ['echannel']; break;
       default: enabledPayments = ['other_qris'];
@@ -313,17 +273,15 @@ app.post('/api/order/create', async (req, res) => {
     if (paymentMethod === 'mandiri') parameter.echannel = { bill_info1: "Topup", bill_info2: "Robux Nexus" };
 
     const transaction = await snap.createTransaction(parameter);
-    
     res.json({ orderId: order.id, token: transaction.token, redirect_url: transaction.redirect_url });
 
   } catch (err) {
-      console.error("❌ MIDTRANS ERROR:", err.message);
+      console.error("Midtrans Error:", err.message);
       res.status(500).json({ error: "Gagal payment gateway" });
   }
 });
 
-
-// 3. Webhook Payment (SUPER DEBUG MODE)
+// 3. Webhook Payment
 app.post('/api/payment/webhook', async (req, res) => {
   const notification = req.body;
 
@@ -332,85 +290,42 @@ app.post('/api/payment/webhook', async (req, res) => {
       const transactionStatus = notification.transaction_status;
       const fraudStatus = notification.fraud_status;
 
-      // [DEBUG 1] Cek apakah Midtrans benar-benar memanggil URL ini
-      console.log(`\n🔔 WEBHOOK MASUK!`);
-      console.log(`👉 Order ID: ${orderId}`);
-      console.log(`👉 Status: ${transactionStatus}`);
-
-      // Logic Penentuan Status
       let isSuccess = false;
       let isFailed = false;
 
       if (transactionStatus == 'capture') {
-          if (fraudStatus == 'challenge') {
-              console.log("⚠️ Status Challenge (Belum Sukses)");
-          } else if (fraudStatus == 'accept') {
-              isSuccess = true;
-          }
+          if (fraudStatus == 'accept') isSuccess = true;
       } else if (transactionStatus == 'settlement') {
           isSuccess = true;
       } else if (transactionStatus == 'cancel' || transactionStatus == 'deny' || transactionStatus == 'expire') {
           isFailed = true;
       }
 
-      // [DEBUG 2] Eksekusi Database
       if (isSuccess) {
-          console.log("✅ Transaksi dianggap SUKSES. Mencoba update database...");
-
           const { data: order, error } = await supabase
             .from('orders')
-            .update({ 
-                payment_status: 'PAID', 
-                status: 'PENGECEKAN_GAMEPASS' // Status berubah jadi siap proses
-            })
+            .update({ payment_status: 'PAID', status: 'PENGECEKAN_GAMEPASS' })
             .eq('id', orderId)
             .select()
             .single();
 
-          if (error) {
-              console.error("❌ DATABASE UPDATE ERROR:", error.message);
-              console.error("Detail:", error);
-          } else {
-              console.log("✅ Database berhasil diupdate:", order.id);
-              
-              // [DEBUG 3] Kirim Discord
-              console.log("🚀 Mengirim Notifikasi Discord Hijau...");
+          if (!error && order) {
               await sendDiscordNotify(order);
-              console.log("✅ Notifikasi Discord Terkirim!");
           }
 
       } else if (isFailed) {
-          console.log("❌ Transaksi GAGAL/EXPIRED. Update database...");
           await supabase
             .from('orders')
             .update({ payment_status: 'FAILED', status: 'GAGAL' })
             .eq('id', orderId);
-      } else {
-          console.log(`ℹ️ Status transaksi lain: ${transactionStatus} (Tidak ada aksi)`);
       }
 
       res.status(200).send('OK');
   } catch (err) {
-      console.error("❌ CRITICAL WEBHOOK ERROR:", err.message);
+      console.error("Webhook Error:", err.message);
       res.status(500).send('Error');
   }
 });
 
-// 4. Status Check
-app.get('/api/order/status/:username', async (req, res) => {
-  const { username } = req.params;
-  const { data, error } = await supabase
-    .from('orders')
-    .select('*')
-    .eq('roblox_username', username)
-    .order('created_at', { ascending: false })
-    .limit(5);
-
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-//const PORT = process.env.PORT || 3000;
-//app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-module.exports = app;
+// WAJIB UNTUK VERCEL SERVERLESS: Export default app
+export default app;
