@@ -42,7 +42,7 @@ export default function Navbar() {
               <Zap className="text-black w-6 h-6 fill-black" />
             </div>
             <span className="text-xl font-bold tracking-tight">
-              Robux<span className="text-neon-primary">Nexus</span>
+              My<span className="text-neon-primary">Robux</span>
             </span>
           </Link>
 
