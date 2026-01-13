@@ -8,7 +8,7 @@ import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API_URL = '/api';
-const ROBUX_RATE = 137.5;
+const ROBUX_RATE = 90.5;
 const LOGO_BASE = "https://snap-assets.al-pc-id-b.cdn.gtflabs.io/snap-preferences/sandbox/v1/logos";
 
 // KOMPONEN ICON ROBUX CUSTOM (Hexagon)

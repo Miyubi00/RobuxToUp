@@ -208,7 +208,7 @@ app.post('/api/order/create', async (req, res) => {
 
   const { username, userId, email, amount, paymentMethod, whatsapp, gamepassLink } = req.body;
   
-  const ROBUX_RATE = 137.5; 
+  const ROBUX_RATE = 90.5; 
   const basePrice = Math.round(amount * ROBUX_RATE);
   
   let adminFee = 0;
