@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  /* Palette dari Gambar */
+  --color-brand-navy: #1F3A52;   /* Warna Gelap (Background) */
+  --color-brand-blue: #608EAC;   /* Warna Biru Tengah (Secondary/Border) */
+  --color-brand-pink: #D8A7D0;   /* Warna Pink (Accent/Button/Highlight) */
+  --color-brand-white: #F0F2F5;  /* Warna Putih (Text/Card BG) */
+}
+
+body {
+  background-color: var(--color-brand-navy);
+  color: var(--color-brand-white);
+  font-family: 'Inter', sans-serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: #152636; }
+::-webkit-scrollbar-thumb { background: var(--color-brand-blue); border-radius: 4px; }
